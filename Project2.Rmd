@@ -1,0 +1,106 @@
+---
+title: "Analyze of events on United States"
+author: "Massimiliano Pinato"
+date: "20 settembre 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Synopsis
+
+
+# Data Processing
+```{r read-data,echo=TRUE}
+library(dplyr) # I use that for manipulate data
+library(data.table) #I use that for faster read csv file
+library(lubridate) #I use that for manipulate date/time
+library(ggplot2) #I use that for plot
+library(knitr) #I use that for knitr function like 'kable' for example
+dfStorm <- fread("repdata-data-StormData.csv") #read file
+```
+I use the "FATALITIES" variable to determine the event most dangerouse for human healt.
+```{r groupby-fatal,echo=TRUE}
+dfStorm.overall <- dfStorm %>% 
+  group_by(EVTYPE) %>% #group by event type
+  summarize(FAT = sum(FATALITIES)) #calculate total of fatalities for each event
+summary(dfStorm.overall) #I want to view how are the events
+```
+I see that the 3rd quarter is still with zero value. It means that only a bit of events have fatalities.
+I try excluding events without fatalities.
+```{r exclude-zero-fat,echo=TRUE}
+dfStorm.overall.zero <- dfStorm.overall %>% 
+  filter(FAT > 0) 
+summary(dfStorm.overall.zero) #I want to view how are the events
+```
+It seems better. Now about 40 events are over 19.75 fatalities. I still want to see how are those 40 events.
+```{r more-than-20,echo=TRUE}
+dfStorm.overall.20 <- dfStorm.overall %>% 
+  filter(FAT > 19.75) 
+summary(dfStorm.overall.20) #I want to view how are the events
+```
+
+About 10 of these have more than 205. Now I want so know how much fatalities have those 205 respect al the others.
+
+```{r analyze-205,echo=TRUE}
+dfStorm.overall.mt205 <- dfStorm.overall %>% #events with more than 205 fatalities
+  filter(FAT > 205) 
+dfStorm.overall.lt205 <- dfStorm.overall %>% #events with less than 205 fatalities
+  filter(FAT <= 205) 
+#calculate total and event numbers of 'more than 205 fatalities'
+fat.mt205 <- sum(dfStorm.overall.mt205$FAT) 
+fat.mt205.cnt <- length(dfStorm.overall.mt205$EVTYPE)
+#calculate total and event numbers of 'less than 205 fatalities'
+fat.lt205 <- sum(dfStorm.overall.lt205$FAT)
+fat.lt205.cnt <- length(dfStorm.overall.lt205$EVTYPE)
+#prepare a dataframe in order to better present the data
+df205 <- as.data.frame(
+    rbind( 
+      c("More than 205 fatalities",fat.mt205,fat.mt205.cnt),
+      c("Less than 205 fatalities",fat.lt205,fat.lt205.cnt) 
+    )
+)
+names(df205) <- c("GROUP","FATALITIES","EVTYPE.NUMBER")
+```
+
+Here the results. I see that the most of the fatalities (over 81%) is concentrate in a little part of events (only 11, about 1% of the overall events).
+
+```{r group205-table,echo=TRUE}
+library(knitr)
+kable(df205)
+```
+
+Now I can see a bar plot of those events.
+
+```{r group-mt205-plot,echo=TRUE}
+g <- ggplot(dfStorm.overall.mt205,aes(x=reorder(EVTYPE,FAT),y=FAT))
+g <- g + geom_bar(stat="identity",size=10)
+g <- g + geom_text(aes(label=EVTYPE),vjust=-0.2)
+g
+```
+
+# Results 
+
+I've extracted the most dangerous events.
+I've seen that 1% (about 10 events) of events produced the 81% of fatalities on overall events in the US.
+
+```{r res-view-mt205-table,echo=TRUE}
+dfStorm.overall.mt205vsOthers <- dfStorm.overall.mt205 %>% arrange(desc(FAT))
+dfStorm.overall.mt205vsOthers <- rbind(dfStorm.overall.mt205vsOthers,
+            data.frame(EVTYPE =  "--- THE OTHERS ---" ,
+                       FAT = sum(dfStorm.overall.lt205$FAT)))
+kable(dfStorm.overall.mt205vsOthers)
+```
+
+On thats events, Tornado is actually the most dangerous for the human health with more than 5000 fatalities.
+
+```{r res-view-mt205-plot,echo=TRUE}
+dfStorm.overall.mt205 <- dfStorm.overall.mt205 %>% 
+  mutate(MOSTDANGEROUS = ifelse(EVTYPE == "TORNADO","MOST","LESS"))
+g <- ggplot(dfStorm.overall.mt205,aes(x=reorder(EVTYPE,FAT),y=FAT,fill=MOSTDANGEROUS))
+g <- g + geom_bar(stat="identity",size=10)
+g <- g + geom_text(aes(label=EVTYPE),vjust=-0.2)
+g
+```
