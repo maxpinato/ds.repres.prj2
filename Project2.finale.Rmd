@@ -1,0 +1,307 @@
+---
+title: "Analyze of storm events on United States"
+author: "Massimiliano Pinato"
+date: "29/9/2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Synopsis
+We analyze storm data to find most dangerous events and events with biggest economics conseguences, using data from NOAA and calculate with R Studio.
+
+#Data Processing and Discovery
+In the next paragraphs we'll seen how the information of storms have been calculated in order to analyze data and prepare the response to most dangerous and greatest economics conseguences events.
+##First Preparation
+First, I declare library that I've used during my data discovery and preparation.
+
+```{r decl.library,echo=TRUE}
+library(plyr) #I need for revaluate
+library(dplyr) # I use that for manipulate data
+library(data.table) #I use that for faster read csv file
+library(lubridate) #I use that for manipulate date/time
+library(ggplot2) #I use that for plot
+library(knitr) #I use that for knitr function like 'kable' for example
+library(stringdist) #I use this for calculate distance of events type string
+library(stringr) #I use this for abbreviation
+library(cowplot) #I use this in order to plot two different chart in the same row
+```
+
+Now I declare functions that I use more times. 
+In this research I need only a function that make me simply to simulate different cut of hierarchical clusterization of event type names, in order to choose the optimal cutoff value.
+
+```{r decl.functions,echo=TRUE}
+#Description: Get a data.frame based on a specific high of a 
+#             hierachical clusterization.
+#Use: I use that in order to simulate differents cut and choose
+#     the optimal cutoff value.
+fn.getEventClusterOffset <- function(events,lstHC,offset){
+  
+  lst_hc <- as.data.frame(cutree(lstHC,h=offset))
+  lst_hc$EVTYPE <- events
+  colnames(lst_hc) <- c("Cluster","EVTYPE")
+  lst_hc <- lst_hc %>% arrange(Cluster)
+  return(lst_hc)
+}
+```
+
+Now, I have to read the data downloaded by the link on (STORM DATA)[https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2,Link].
+
+In order to reproduce the present research you have to download the file, unzip, and save on the current folder with the name ´repdata-data-StormData.csv`,
+
+First elaboration is read the file. I use `fread` for performance reason.
+
+```{r readfile,echo=TRUE}
+dfStorm <- fread("repdata-data-StormData.csv") #read file
+```
+
+According to the data dictionary, we have to consider data since 1996. I first format data field `BGN_DATE` as date type in r-lang, and then I apply a filter cross all my analysis.
+
+```{r date-format-and-filter,echo=TRUE}
+#Date Format and Filter
+dfStorm.flt <- dfStorm %>% 
+  mutate( BGN_DATE = as.Date(as.character(BGN_DATE),"%m/%d/%Y %H:%M:%S") ) %>%
+  filter(year(BGN_DATE) >= 1996)
+```
+
+##Clusterize Event types
+During data discovery we can see that most event type names refer to the same real event type. The list is too big to be simplified with a regular expression. 
+I choose to use hierarchical aggregation.
+
+```{r clusterize,echo=TRUE}
+lstEv <- unique(dfStorm.flt$EVTYPE)
+dstEv <- stringdistmatrix(lstEv,lstEv,method="jw")
+rownames(dstEv) <- lstEv
+lstEv_hc <- hclust(as.dist(dstEv))
+```
+
+Now that I have my hiearchical clusterization, I want to find the right cutoff value to have cluster with similar events.
+I've simulated cutoff value between 0.10 and 0.40 (by an interval off 0.05) observing the cluster items and searching error of clusterization.
+To simplify my work I've used the following instruction.
+
+```{r cluster-simulation,echo=TRUE}
+lstEv_hc.c10 <- fn.getEventClusterOffset(lstEv,lstEv_hc,0.10)
+lstEv_hc.c15 <- fn.getEventClusterOffset(lstEv,lstEv_hc,0.15)
+lstEv_hc.c20 <- fn.getEventClusterOffset(lstEv,lstEv_hc,0.20)
+lstEv_hc.c25 <- fn.getEventClusterOffset(lstEv,lstEv_hc,0.25)
+lstEv_hc.c30 <- fn.getEventClusterOffset(lstEv,lstEv_hc,0.30)
+lstEv_hc.c35 <- fn.getEventClusterOffset(lstEv,lstEv_hc,0.35)
+lstEv_hc.c40 <- fn.getEventClusterOffset(lstEv,lstEv_hc,0.40)
+```
+
+For every clusterization, I've searched for error (starting from the bigger cutoff value).
+
+0.40 fails on cluster 2.
+
+```{r cluster-simulation-40,echo=TRUE}
+kable(lstEv_hc.c40 %>% filter(Cluster == 2))
+```
+
+0.35 fails on cluster 36.
+
+```{r cluster-simulation-35,echo=TRUE}
+kable(lstEv_hc.c35 %>% filter(Cluster == 36))
+```
+
+0.30 fails on cluster 168.
+
+```{r cluster-simulation-30,echo=TRUE}
+kable(lstEv_hc.c30 %>% filter(Cluster == 168))
+```
+
+The value of *0.25* seems to be an optimal value of cutoff.
+So, I can prepare a final dataframe with the indication of the cluster.
+In particular, I add a new column in the original data.frame, ```EVTYPE.CLUSTER``` with the first event type name of the cluster.
+
+```{r cluster-simulation-optimal,echo=TRUE}
+lstEv_hc.optimal <- lstEv_hc.c25 %>% #choose the optimal clustere
+  group_by(Cluster) %>% #group by cluster
+  mutate(EVTYPE.CLUSTER = min(EVTYPE)) %>% #prepare the cluster name
+  ungroup() #return with the entire data.frame
+#Merge with the original data.frame in order to associate the EVTYPE.CLUSTER
+#of the corresponding EVTYPE
+dfStorm.clustered <- merge(dfStorm.flt,lstEv_hc.optimal,
+    by.x = "EVTYPE",by.y = "EVTYPE",all.x = T,all.y = F) 
+```
+
+Now we have a data.frame clusterized that we can use cross all our analysis.
+
+##Prepare dangerous data.frame for most dangerous events
+In order to analyze dangerous, I cluster, fatalities and injurious.
+So, first I simplify my data.frame and summarize for fatalities and injurious.
+
+```{r dang-prepare,echo=TRUE}
+dfStorm.dang <- dfStorm.clustered %>% 
+  select(EVTYPE.CLUSTER,FATALITIES,INJURIES) %>% 
+  group_by(EVTYPE.CLUSTER) %>% 
+  dplyr::summarise(
+    FAT.TOT = sum(as.numeric(as.character(FATALITIES))),
+    INJ.TOT = sum(as.numeric(as.character(INJURIES)))
+  )
+```
+
+Now we can prepare the top 5 events for both the measures.
+I prepare two separated data.frame (because I want to have two differents perspective).
+
+```{r dang-top5-table,echo=TRUE}
+dfStorm.dang.top5Fatal <- dfStorm.dang %>%
+  top_n(5,FAT.TOT) %>% #select top 5
+  arrange(desc(FAT.TOT)) %>% #order by fatalities
+  select(EVTYPE.CLUSTER,FAT.TOT) %>% #simplify dataset
+  mutate(EVTYPE.ABBR = abbreviate(EVTYPE.CLUSTER,minlength=6)) #abbreviate description
+
+dfStorm.dang.top5Injur <- dfStorm.dang %>%
+  top_n(5,INJ.TOT) %>% #select top5
+  arrange(desc(INJ.TOT)) %>% #order by fatalities
+  select(EVTYPE.CLUSTER,INJ.TOT) %>% #simplify dataset
+  mutate(EVTYPE.ABBR = abbreviate(EVTYPE.CLUSTER,minlength=6)) #abbreviate description
+```
+
+Finally I prepare two simple bar plot.
+
+```{r dang-top5-plot,echo=TRUE}
+g.fatal <- ggplot(dfStorm.dang.top5Fatal, aes(x = EVTYPE.ABBR,y = FAT.TOT)) + 
+  geom_bar(stat = "identity") + 
+  ggtitle("Most dangerous - Fatalities" ) + 
+  labs(x="Events (clustered)",y="Fatalities")
+g.injuries <- ggplot(dfStorm.dang.top5Injur, aes(x = EVTYPE.ABBR,y = INJ.TOT)) + 
+  geom_bar(stat = "identity") + 
+  ggtitle("Most dangerous - Injuries" ) + 
+  labs(x="Events (clustered)",y="Injuries")
+```
+
+##Prepare economics data.frame for gratest economics conseguences events
+In order to work with economics data I've first to format the exponetial of damage value, to calculate the damage cash.
+According to data dictionary, exponential are "K" (x1000), "M" (x10^6) and "B" (x10^9).
+Data have others value not recognized.
+I want to verify the impact of the others value.
+
+```{r economics-discovery-exp,echo=TRUE}
+#Valuate PROPDMGEXP. I need to use explicit library prefix because n() is in conflicts
+#between plyr and dplyr (and I need both the library)
+dfPExp <- dfStorm.flt %>%
+  group_by(PROPDMGEXP) %>%
+  dplyr::summarise(    CNT = n(),    VAL = sum(PROPDMG)  )
+kable(dfPExp)
+#Valuate CROPDMGEXP
+dfCExp <- dfStorm.flt %>%
+  group_by(CROPDMGEXP) %>%
+  dplyr::summarise(CNT = n(),VAL = sum(CROPDMG))
+kable(dfCExp)
+```
+
+For property damage (the table `PROPDMGEXP`) we 1 result with "0" exponential and about 50% of measurement with empty. All this measures have value empty, so they can be ignored, as well as for crop damage (table `CROPDMGEXP`).
+
+So, I decide to filter dataframe excluding the measure that have exponential not in K/M/B.
+
+```{r economics-clean-valid-exp,echo=TRUE}
+dfStorm.economics <- dfStorm.clustered %>% select(EVTYPE.CLUSTER,CROPDMG,CROPDMGEXP,PROPDMG,PROPDMGEXP)
+dfStorm.fltValidCash <- dfStorm.economics %>%
+  filter( CROPDMGEXP %in% c("K","M","B") & PROPDMGEXP %in% c("K","M","B") )
+```
+
+Now I have to calculate cash for property, crop, and total cash value (as sum of property and cash), applying the correct exponential.
+In order to calculate the exponential I use the function `revalue` of plyr library that apply the mapping from a vector.
+
+```{r economics-calculate-cash,echo=TRUE}
+lstMapping <- c("K" = 10^3,"M" = 10^6,"B" = 10^9)
+#Calculate Cash Exponential
+dfStorm.wCashExp <- dfStorm.fltValidCash %>% 
+  mutate(
+    CEXP = revalue(CROPDMGEXP ,lstMapping),
+    PEXP = revalue(PROPDMGEXP ,lstMapping)
+  )
+#Calculate correct cash and overall cash
+dfStorm.wCash <- dfStorm.wCashExp %>% 
+  mutate(
+    CROP.CASH = as.numeric(CROPDMG) * as.numeric(CEXP),
+    PROP.CASH = as.numeric(PROPDMG) * as.numeric(PEXP)
+  )
+#Finally, I summarise calculating overall cash and grouping
+#by event type cluster.
+dfStorm.wCash <- dfStorm.wCash %>%
+  mutate( OVER.CASH = CROP.CASH + PROP.CASH) %>%
+  group_by(EVTYPE.CLUSTER) %>%
+  dplyr::summarise(
+    CROP.CASH.TOT = sum(CROP.CASH),
+    PROP.CASH.TOT = sum(PROP.CASH),
+    OVER.CASH.TOT = sum(OVER.CASH)
+  )
+```
+
+Now that I have my dataframe groupped and summarized, I can calculate top 5 of the three measures.
+
+```{r economics-calculate-top5,echo=TRUE}
+dfStorm.eco.top5Crop <- dfStorm.wCash %>%
+  top_n(5,CROP.CASH.TOT) %>%
+  arrange(desc(CROP.CASH.TOT)) %>%
+  select(EVTYPE.CLUSTER,CROP.CASH.TOT) %>%
+  mutate(EVTYPE.ABBR = abbreviate(EVTYPE.CLUSTER,minlength=6))
+
+dfStorm.eco.top5Prop <- dfStorm.wCash %>%
+  top_n(5,PROP.CASH.TOT) %>%
+  arrange(desc(PROP.CASH.TOT)) %>%
+  select(EVTYPE.CLUSTER,PROP.CASH.TOT) %>%
+  mutate(EVTYPE.ABBR = abbreviate(EVTYPE.CLUSTER,minlength=6))
+
+dfStorm.eco.top5Overall <- dfStorm.wCash %>%
+  top_n(5,OVER.CASH.TOT) %>%
+  arrange(desc(OVER.CASH.TOT)) %>%
+  select(EVTYPE.CLUSTER,OVER.CASH.TOT) %>%
+  mutate(EVTYPE.ABBR = abbreviate(EVTYPE.CLUSTER,minlength=6))
+```
+
+And now I prepare the relative chart.
+
+```{r economics-calculate-top5-chart,echo=TRUE}
+g.ecoCrop <- ggplot(dfStorm.eco.top5Crop, aes(x = EVTYPE.ABBR,y = CROP.CASH.TOT)) + 
+  geom_bar(stat = "identity") + 
+  ggtitle("Most expansive - Crop Damage" ) + 
+  labs(x="Events (clustered)",y="Crop Damage")
+
+g.ecoProp <- ggplot(dfStorm.eco.top5Prop, aes(x = EVTYPE.ABBR,y = PROP.CASH.TOT)) + 
+  geom_bar(stat = "identity") + 
+  ggtitle("Most expansive - Property Damage" ) + 
+  labs(x="Events (clustered)",y="Property Damage")
+
+g.ecoOver <- ggplot(dfStorm.eco.top5Overall, aes(x = EVTYPE.ABBR,y = OVER.CASH.TOT)) + 
+  geom_bar(stat = "identity") + 
+  ggtitle("Most expansive - Overall Damage" ) + 
+  labs(x="Events (clustered)",y="Overall Damage")
+```
+
+#Results
+I have analyzed storm data of the last 20 years on Unites States, in order to valuate the most dangerous events and the events with the biggest economics conseguences.
+In the following paragraphes we show which events are most relevants.
+
+##Most Dangerous Events
+For the dangerous I have analyzed separately fatalities and injurious.
+We now can see the results.
+
+```{r res-dang-fat,echo=TRUE}
+kable(dfStorm.dang.top5Fatal)
+kable(dfStorm.dang.top5Injur)
+g.fatal
+g.injuries
+```
+
+In general, Tornado and Excessive Heat are the events most dangerous. 
+
+##Greatest Economics Conseguences
+
+For economics conseguences, I have analyzed separately property and crop damage, and I have calculate overall damage with sum of both the measures.
+
+So, here the results.
+
+```{r res-eco,echo=TRUE}
+kable(dfStorm.eco.top5Prop)
+kable(dfStorm.eco.top5Crop)
+kable(dfStorm.eco.top5Overall)
+g.ecoProp
+g.ecoCrop
+g.ecoOver
+```
+
+In general, flash flood have biggest economics conseguences in the last 20 years.

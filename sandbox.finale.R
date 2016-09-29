@@ -26,26 +26,6 @@ fn.getEventClusterOffset <- function(events,lstHC,offset){
 dfStorm.flt <- dfStorm %>% 
   mutate( BGN_DATE = as.Date(as.character(BGN_DATE),"%m/%d/%Y %H:%M:%S") ) %>%
   filter(year(BGN_DATE) >= 1996)
-#Valuate PROPDMGEXP. I need to use explicit library prefix because n() is in conflicts
-#between plyr and dplyr (and I need both the library)
-dfPExp <- dfStorm.flt %>%
-  group_by(PROPDMGEXP) %>%
-  dplyr::summarise(    CNT = n(),    VAL = sum(PROPDMG)  )
-#Valuate CROPDMGEXP
-dfCExp <- dfStorm.flt %>%
-  group_by(CROPDMGEXP) %>%
-  dplyr::summarise(CNT = n(),VAL = sum(CROPDMG))
-#In both the case, values are empty or irrilevant, but cases number is 
-#relevant.
-#According to data dictionary, when the exponential is empty or different,
-#we have to see the remarks.
-#Reading remarks, we cannot assume to have zero damage, but we have to do because of
-#missing data.
-#So, I filter only data with valid exponential.
-#But those errors haven't to envolve consideration about fatalities and injurius.
-
-#Before any consideration about dangerous and economics, I have to 
-#cluster the EVTYPE because there are different string of the same event.
 
 lstEv <- unique(dfStorm.flt$EVTYPE)
 dstEv <- stringdistmatrix(lstEv,lstEv,method="jw")
@@ -63,7 +43,10 @@ lstEv_hc.c40 <- fn.getEventClusterOffset(lstEv,lstEv_hc,0.40)
 #0.35 fails on cluster 36
 #0.30 fails on cluster 168
 #0.25 seems to be a valid offset.
-lstEv_hc.optimal <- lstEv_hc.c25 %>% group_by(Cluster) %>% mutate(EVTYPE.CLUSTER = min(EVTYPE)) %>% ungroup()
+lstEv_hc.optimal <- lstEv_hc.c25 %>% 
+  group_by(Cluster) %>% 
+  mutate(EVTYPE.CLUSTER = min(EVTYPE)) %>% 
+  ungroup()
 dfStorm.clustered <- merge(dfStorm.flt,lstEv_hc.optimal,
     by.x = "EVTYPE",by.y = "EVTYPE",all.x = T,all.y = F) 
 
@@ -100,6 +83,28 @@ g.injuries <- ggplot(dfStorm.dang.top5Injur, aes(x = EVTYPE.ABBR,y = INJ.TOT)) +
 
 
 #Economics Dataframe
+#Valuate PROPDMGEXP. I need to use explicit library prefix because n() is in conflicts
+#between plyr and dplyr (and I need both the library)
+dfPExp <- dfStorm.flt %>%
+  group_by(PROPDMGEXP) %>%
+  dplyr::summarise(    CNT = n(),    VAL = sum(PROPDMG)  )
+#Valuate CROPDMGEXP
+dfCExp <- dfStorm.flt %>%
+  group_by(CROPDMGEXP) %>%
+  dplyr::summarise(CNT = n(),VAL = sum(CROPDMG))
+#In both the case, values are empty or irrilevant, but cases number is 
+#relevant.
+#According to data dictionary, when the exponential is empty or different,
+#we have to see the remarks.
+#Reading remarks, we cannot assume to have zero damage, but we have to do because of
+#missing data.
+#So, I filter only data with valid exponential.
+#But those errors haven't to envolve consideration about fatalities and injurius.
+
+#Before any consideration about dangerous and economics, I have to 
+#cluster the EVTYPE because there are different string of the same event.
+
+
 dfStorm.economics <- dfStorm.clustered %>% select(EVTYPE.CLUSTER,CROPDMG,CROPDMGEXP,PROPDMG,PROPDMGEXP)
 dfStorm.fltValidCash <- dfStorm.economics %>%
   filter( CROPDMGEXP %in% c("K","M","B") & PROPDMGEXP %in% c("K","M","B") )
