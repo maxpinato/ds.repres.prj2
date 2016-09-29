@@ -32,11 +32,24 @@ df205 <- as.data.frame(
   )
 )
 names(df205) <- c("GROUP","FATALITIES","EVTYPE.NUMBER")
+View(df205)
+#kable(df205)
 dfStorm.overall.mt205 <- dfStorm.overall.mt205 %>% 
-  arrange(desc(FAT)) 
-g <- ggplot(dfStorm.overall.mt205,aes(x=reorder(EVTYPE,FAT),y=FAT))
-g <- g +  geom_bar(stat="identity",size=10)
-g <- g + geom_text(aes(label=EVTYPE),vjust=-0.2)
-g
-
-
+  mutate(
+    EVTYPE.ABBR = abbreviate(EVTYPE,minlength=3)
+  )
+g <- ggplot(dfStorm.overall.mt205,aes(x=reorder(EVTYPE.ABBR,FAT),y=FAT))
+g <- g + geom_bar(stat="identity",size=10)
+g <- g + geom_text(aes(label=FAT),vjust=-0.2)
+#g
+dfStorm.overall.mt205vsOthers <- dfStorm.overall.mt205 %>% arrange(desc(FAT))
+dfStorm.overall.mt205vsOthers <- rbind(dfStorm.overall.mt205vsOthers,
+                                       data.frame(EVTYPE =  "--- THE OTHERS ---" ,
+                                                  FAT = sum(dfStorm.overall.lt205$FAT),
+                                       EVTYPE.ABBR = "-O-"))
+View(dfStorm.overall.mt205vsOthers) # kable(dfStorm.overall.mt205vsOthers)
+dfStorm.overall.mt205 <- dfStorm.overall.mt205 %>% 
+  mutate(MOSTDANGEROUS = ifelse(EVTYPE == "TORNADO","MOST","LESS"))
+g1 <- ggplot(dfStorm.overall.mt205,aes(x=reorder(EVTYPE.ABBR,FAT),y=FAT,fill=MOSTDANGEROUS))
+g1 <- g1 + geom_bar(stat="identity",size=10)
+g1 <- g1 + geom_text(aes(label=FAT),vjust=-0.2)

@@ -23,3 +23,6 @@ dfStorm.overall.top10INJ <- dfStorm.overall %>%
 g.inj <- ggplot(dfStorm.overall.top10INJ,aes(x=reorder(EVTYPE.ABR,INJ),y=INJ)) +
   geom_bar(stat="identity") + 
   xlab("Event Types") + ylab("Injurious") + labs(title="Top 10 events for injurious")
+
+## ECONOMICS
+
